@@ -1,0 +1,254 @@
+Let's Build a Container in Go
+
+Mateusz Dymiński
+Nokia
+
+[[github.com/mateuszdyminski/container][github.com/mateuszdyminski/container]]
+@m_dyminski
+
+* Whoami
+
+Mateusz Dymiński:
+
+- Software Developer at Nokia
+- 7+ exp with Java
+- 3+ exp with Go
+- One of the organizer [[https://www.meetup.com/GoWroc][GoWroc - Golang Wroclaw Meetup]]
+- Github: [[http://github.com/mateuszdyminski][github.com/mateuszdyminski]]
+- Twitter: [[http://twitter.com/m_dyminski][@m_dyminski]]
+- LinkedIn: [[http://linkedin.com/in/mdyminski][linkedin.com/in/mdyminski]]
+
+* Container's Anatomy
+
+- Namespaces
+- CGroups
+- Filesystem
+
+* Agenda
+
+- What is a container?
+- The building blocks (namespaces, cgroups)
+- Demo
+
+* What is a container?
+
+* What is a container?
+
+High level approach:
+
+    it's a lightweight VM I can get a shell on it (through SSH or otherwise)
+
+It "feels" like a VM:
+
+    own process space
+    own network interface
+    can run stuff as root
+    can install packages
+    can run services
+    can mess up routing, iptables...
+
+* What is a container?
+
+it's chroot on steroids
+
+It's not quite like a VM:
+
+    uses the host kernel
+    can't boot a different OS
+    can't have its own modules
+    doesn't need initas PID 1
+    doesn't need syslogd, cron...
+
+It's just a bunch of processes visible on the host machine (contrast with VMs which are opaque)
+
+* The building blocks
+
+* Control groups
+
+* Control groups
+
+Control Groups provide a mechanism for aggregating/partitioning sets of
+tasks, and all their future children, into hierarchical groups with
+specialized behaviour.
+
+- Control groups Resource metering and limiting
+
+    memory
+    CPU
+    block I/O
+    network
+
+- Device node (/dev/*) access control
+
+* Control groups
+
+Generalities
+
+- Each subsystem (memory, CPU...) has a hierarchy (tree)
+- Hierarchies are independent (the trees for e.g. memory and CPU can be different)
+- Each process belongs to exactly 1 node in each hierarchy (think of each hierarchy as a different dimension or axis)
+- Each hierarchy starts with 1 node (the root)
+- All processes initially belong to the root of each hierarchy
+- Each node = group of processes (sharing the same resources)
+
+* Control groups exmaple
+
+As an example of a scenario (originally proposed by vatsa@in.ibm.com)
+that can benefit from multiple hierarchies, consider a large
+university server with various users - students, professors, system
+tasks etc. The resource planning for this server could be along the
+following lines:
+
+       CPU :          "Top cpuset"
+                       /       \
+               CPUSet1         CPUSet2
+                  |               |
+               (Professors)    (Students)
+
+               In addition (system tasks) are attached to topcpuset (so
+               that they can run anywhere) with a limit of 20%
+
+       Memory : Professors (50%), Students (30%), system (20%)
+
+       Disk : Professors (50%), Students (30%), system (20%)
+
+       Network : WWW browsing (20%), Network File System (60%), others (20%)
+                               / \
+               Professors (15%)  students (5%)
+
+* Control groups
+
+Memory cgroup limits:
+- Each group can have (optional) hard and soft limits
+- Soft limits are not enforced (they influence reclaim under memory pressure)
+- Hard limits will trigger a per-group OOM killer
+- The OOM killer can be customized (oom-notifier); when the hard limit is exceeded:
+
+    freeze all processes in the group
+    notify user space (instead of going rampage)
+    we can kill processes, raise limits, migrate containers ...
+    when we're in the clear again, unfreeze the group
+
+- Limits can be set for physical, kernel, total memory
+
+* Control groups
+
+Cpu cgroup
+
+- Keeps track of user/system CPU time
+- Keeps track of usage per CPU
+- Allows to set weights
+
+* Control groups
+
+Cpuset cgroup
+
+- Pin groups to specific CPU(s)
+- Reserve CPUs for specific apps
+- Avoid processes bouncing between CPUs
+- Also relevant for NUMA systems
+- Provides extra dials and knobs (per zone memory pressure, process migration costs...)
+
+* Control groups
+
+Blkio cgroup
+
+- Keeps track of I/Os for each group
+
+    per block device
+    read vs write
+    sync vs async
+
+- Set throttle (limits) for each group
+
+    per block device
+    read vs write
+    ops vs bytes
+
+- Set relative weights for each group
+
+* Control groups
+
+Devices cgroup
+
+- Controls what the group can do on device nodes
+- Permissions include read/write/mknod
+- Typical use:
+
+    allow /dev/{tty,zero,random,null}...
+    deny everything else
+
+- A few interesting nodes:
+
+    /dev/net/tun(network interface manipulation)
+    /dev/fuse(filesystems in user space)
+    /dev/kvm(VMs in containers, inception!)
+    /dev/dri(GPU)
+
+* Namespaces
+
+* Namespaces
+
+Namespaces:
+
+- Provide processes with their own view of the system
+- Cgroups = limits how much you can use; namespaces = limits what you can see (and therefore use)
+- Multiple namespaces:
+
+    pid
+    net
+    mnt
+    uts
+    ipc
+    user
+
+- Each process is in one namespace of each type
+
+* Namespaces
+
+Pid namespace
+
+- Processes within a PID namespace only see processes in the same PID namespace
+- Each PID namespace has its own numbering (starting at 1)
+- When PID 1 goes away, the whole namespace is killed
+- Those namespaces can be nested
+- A process ends up having multiple PIDs (one per namespace in which its nested)
+
+* Namespaces
+
+Net namespace:
+
+- Processes within a given network namespace get their own private network stack, including:
+
+    network interfaces (including lo)
+    routing tables
+    iptables rules
+    sockets (ss, netstat)
+
+- You can move a network interface from a netns to another ip link set dev eth0 netns PID
+
+* Namespaces
+
+Mnt namespace:
+
+- Processes can have their own root fs (à la chroot)
+- Processes can also have "private" mounts
+
+    /tmp(scoped per user, per service...)
+    Masking of /proc, /sys
+    NFS auto-mounts (why not?)
+
+- Mounts can be totally private, or shared
+- No easy way to pass along a mount from a namespace to another
+
+* Namespaces
+
+Uts namespace
+
+- gethostname / sethostname
+
+* Namespaces
+
+Allows a process (or group of processes) to have own: IPC semaphores IPC message queues IPC shared memory ... without risk of conflict with other instances.
+
+* Q & A
