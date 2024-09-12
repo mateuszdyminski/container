@@ -1,0 +1,86 @@
+images:
+  # Try to use release-yyyyMMdd image if available. Note that release-yyyyMMdd will be removed after several months.
+  - location: "https://cloud-images.ubuntu.com/releases/22.04/release-20240126/ubuntu-22.04-server-cloudimg-amd64.img"
+    arch: "x86_64"
+    digest: "sha256:9f8a0d84b81a1d481aafca2337cb9f0c1fdf697239ac488177cf29c97d706c25"
+  - location: "https://cloud-images.ubuntu.com/releases/22.04/release-20240126/ubuntu-22.04-server-cloudimg-arm64.img"
+    arch: "aarch64"
+    digest: "sha256:dddfb1741f16ea9eaaaeb731c5c67dd2cb38a4768b2007954cb9babfe1008e0d"
+  # Fallback to the latest release image.
+  # Hint: run `limactl prune` to invalidate the cache
+  - location: "https://cloud-images.ubuntu.com/releases/22.04/release/ubuntu-22.04-server-cloudimg-amd64.img"
+    arch: "x86_64"
+  - location: "https://cloud-images.ubuntu.com/releases/22.04/release/ubuntu-22.04-server-cloudimg-arm64.img"
+    arch: "aarch64"
+
+cpus: 4
+memory: "8GiB"
+disk: "100GiB"
+
+# Expose host directories to the guest.
+# CAUTION: `writable` SHOULD be false for the home directory. Setting `writable` to true is possible, but untested and
+# dangerous.
+mounts:
+  - location: "/tmp/lima"
+    writable: true
+  - location: "~/workspace/go/src/github.com/mateuszdyminski/container"
+    writable: true
+containerd:
+  # Disable system-wide (aka rootful) containerd and its dependencies.
+  system: false
+  # Disable user-scoped (aka rootless) containerd and its dependencies.
+  user: false
+provision:
+  # Install dev tools.
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eux -o pipefail
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update
+      apt-get install -y build-essential tmux jq linux-tools-$(uname -r)
+  # Install Docker Engine and Containerd
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eux -o pipefail
+      command -v docker >/dev/null 2>&1 && exit 0
+      # Add Docker's official GPG key:
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get update
+      apt-get install -y ca-certificates curl gnupg
+      install -m 0755 -d /etc/apt/keyrings
+      curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+      chmod a+r /etc/apt/keyrings/docker.gpg
+      # Add the Docker repository to apt sources:
+      echo \
+        "deb [arch="$(dpkg --print-architecture)" signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+        "$(. /etc/os-release && echo "$VERSION_CODENAME")" stable" | \
+        tee /etc/apt/sources.list.d/docker.list > /dev/null
+      apt-get update
+      # Install containerd and Docker packages
+      apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+      # rm -rf /etc/containerd/config.toml
+      # containerd config default > /etc/containerd/config.toml
+      # systemctl restart containerd  
+  # Manage Docker as a non-root user
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eux -o pipefail
+      getent group docker
+      test $? -eq 0 || exit 0
+      usermod -aG docker {{.User}}
+  # Download and install Go
+  # See https://go.dev/doc/install
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eux -o pipefail
+      command -v go >/dev/null 2>&1 && exit 0
+      VERSION="1.23.1"
+      ARCH=$(dpkg --print-architecture)
+      curl -fsSL https://go.dev/dl/go${VERSION}.linux-${ARCH}.tar.gz -o /tmp/go${VERSION}.linux-${ARCH}.tar.gz
+      tar -C /usr/local -xzf /tmp/go${VERSION}.linux-${ARCH}.tar.gz
+      rm /tmp/go${VERSION}.linux-${ARCH}.tar.gz
+      echo 'export PATH="$PATH:/usr/local/go/bin"' >> {{.Home}}/.bashrc

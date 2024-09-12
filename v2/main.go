@@ -24,12 +24,11 @@ func run() {
 	cmd.Stderr = os.Stderr
 	cmd.Stdout = os.Stdout
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Cloneflags: syscall.CLONE_NEWUTS, // setting hostname, domain name will not affect rest of the system
+		Cloneflags: syscall.CLONE_NEWUTS,
 	}
 
 	must(cmd.Run())
 }
-
 
 func must(err error) {
 	if err != nil {

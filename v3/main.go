@@ -38,18 +38,24 @@ func child() {
 	fmt.Printf("starting container \n")
 	fmt.Printf("[child] running %v as PID: %d \n", os.Args[2:], os.Getpid())
 
+	must(syscall.Sethostname([]byte("inception")))
+	must(syscall.Chroot("/root/container-fs/diff")) // put path to proper linux fs here
+	must(syscall.Chdir("/"))
+	must(syscall.Mount("proc", "proc", "proc", 0, ""))
+
 	cmd := exec.Command(os.Args[2], os.Args[3:]...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
 
-	syscall.Chroot("/home/rootfs")
-	os.Chdir("/")
-	syscall.Mount("proc", "proc", "proc", 0, "")
-
-	if err := cmd.Run(); err != nil {
-		panic(err)
-	}
+	must(cmd.Run())
 
 	fmt.Printf("quitting container \n")
+}
+
+func must(err error) {
+	if err != nil {
+		fmt.Println("error", err)
+		os.Exit(1)
+	}
 }
